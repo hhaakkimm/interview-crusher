@@ -1,88 +1,90 @@
-# RabbitMQ - Полное руководство
+# RabbitMQ - Руководство для технического интервью
 
-## Содержание
-1. [Событийная архитектура: producer/message/consumer](#событийная-архитектура)
-2. [AMQ Protocol: publisher, channel, exchange, message, routing-key, queue, consumer](#amq-protocol)
-3. [Get vs Consume](#get-vs-consume)
-4. [Виды exchanges: fanout, direct, topic](#виды-exchanges)
-5. [Basic.Ack, Basic.Reject, Basic.Nack](#acknowledgements)
-6. [Prefetch и Consumer transactions](#prefetch-и-transactions)
-7. [Message properties и Priority](#message-properties-и-priority)
-8. [Dead Letter Exchanges](#dead-letter-exchanges)
-9. [Автоматическое истечение queues/messages](#автоматическое-истечение)
-10. [Temporary и Permanent queues](#temporary-и-permanent-queues)
-11. [Speed vs Guaranteed delivery](#speed-vs-guaranteed-delivery)
-12. [Virtual hosts](#virtual-hosts)
-13. [Сжатие сообщений через gzip](#сжатие-сообщений)
-14. [HA queues](#ha-queues)
-15. [Scaling с clusters/Shovel plugin](#scaling-rabbitmq)
-16. [Cross-cluster message distribution](#cross-cluster-distribution)
+> 💡 **Как объяснить RabbitMQ на интервью за 30 секунд:**
+> "RabbitMQ — это брокер сообщений. Представьте почтовое отделение: отправитель бросает письмо в ящик, почта сортирует и доставляет получателю. Отправителю не нужно ждать, пока получатель заберёт письмо. Это даёт асинхронность и развязку между сервисами."
 
 ---
 
-## Событийная архитектура
+## 1. Событийная архитектура
 
-### Слабосвязанная архитектура
+### 🎯 Что спрашивают на интервью
+> "Что такое message broker и зачем он нужен?"
+
+### Синхронная vs Асинхронная архитектура
+
+**Синхронно (HTTP):**
 ```
-┌──────────┐     ┌─────────────┐     ┌──────────┐
-│ Producer │────►│  RabbitMQ   │────►│ Consumer │
-└──────────┘     │  (Broker)   │     └──────────┘
-                 └─────────────┘
+User → API → Payment Service → Email Service → Response
+         |_____waiting_______|______waiting________|
+```
+Проблема: если Email Service упал — вся цепочка сломана.
+
+**Асинхронно (Message Queue):**
+```
+User → API → Response (сразу!)
+         ↓
+      RabbitMQ → Payment Service
+               → Email Service
+               → Analytics Service
 ```
 
 ### Преимущества
-- **Асинхронность** — producer не ждёт consumer
-- **Масштабируемость** — добавление consumers
-- **Отказоустойчивость** — сообщения сохраняются
-- **Развязка** — сервисы независимы
+- **Асинхронность**: ответ пользователю мгновенный
+- **Развязка**: сервисы не знают друг о друге
+- **Надёжность**: сообщение сохраняется, пока не обработано
+- **Масштабирование**: добавляем consumer'ов при нагрузке
 
-### Use Cases
-- Обработка заказов в e-commerce
-- Email/SMS уведомления
-- Обработка изображений
-- Микросервисная коммуникация
+### 📝 Фраза для интервью
+> "Message broker позволяет перейти от синхронной к асинхронной архитектуре. Сервисы обмениваются сообщениями через очередь, не зная друг о друге. Это даёт отказоустойчивость — если получатель недоступен, сообщение сохранится в очереди."
 
 ---
 
-## AMQ Protocol
+## 2. Компоненты AMQP Protocol
 
-### Компоненты
+### 🎯 Что спрашивают
+> "Объясните архитектуру RabbitMQ"
+
+### Схема прохождения сообщения
 ```
-Producer → Channel → Exchange → Binding → Queue → Channel → Consumer
-                         │
-                    routing-key
+Producer → Exchange → Binding → Queue → Consumer
+              │
+         routing key
 ```
 
-| Компонент | Описание |
-|-----------|----------|
-| Publisher | Отправляет сообщения |
-| Channel | Виртуальное соединение внутри connection |
-| Exchange | Маршрутизирует сообщения в queues |
-| Message | Данные + метаданные |
-| Routing Key | Ключ для маршрутизации |
-| Queue | Буфер для хранения сообщений |
-| Consumer | Получает и обрабатывает сообщения |
+### Компоненты простым языком
 
-### Пример Python (pika)
+| Компонент | Аналогия | Назначение |
+|-----------|----------|------------|
+| **Producer** | Отправитель письма | Публикует сообщения |
+| **Exchange** | Сортировочный центр | Маршрутизирует сообщения |
+| **Binding** | Правило сортировки | Связывает exchange с queue |
+| **Routing Key** | Адрес на конверте | Ключ для маршрутизации |
+| **Queue** | Почтовый ящик | Хранит сообщения |
+| **Consumer** | Получатель | Обрабатывает сообщения |
+| **Channel** | Виртуальное соединение | Мультиплексирование внутри connection |
+
+### Пример кода
+
 ```python
 import pika
 
+# Подключение
 connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
 channel = connection.channel()
 
-# Объявление exchange и queue
+# Объявляем инфраструктуру
 channel.exchange_declare(exchange='orders', exchange_type='direct')
-channel.queue_declare(queue='order_processing')
+channel.queue_declare(queue='order_processing', durable=True)
 channel.queue_bind(queue='order_processing', exchange='orders', routing_key='new_order')
 
-# Публикация
+# Producer: отправляем
 channel.basic_publish(
     exchange='orders',
     routing_key='new_order',
     body='{"order_id": 123}'
 )
 
-# Потребление
+# Consumer: получаем
 def callback(ch, method, properties, body):
     print(f"Получено: {body}")
     ch.basic_ack(delivery_tag=method.delivery_tag)
@@ -91,175 +93,131 @@ channel.basic_consume(queue='order_processing', on_message_callback=callback)
 channel.start_consuming()
 ```
 
----
-
-## Get vs Consume
-
-### Basic.Get (Pull)
-```python
-# Получить одно сообщение
-method, properties, body = channel.basic_get(queue='myqueue', auto_ack=True)
-if method:
-    print(body)
-```
-- ❌ Неэффективно для потока сообщений
-- ✅ Подходит для единичных запросов
-
-### Basic.Consume (Push)
-```python
-# Подписка на сообщения
-channel.basic_consume(queue='myqueue', on_message_callback=callback)
-channel.start_consuming()
-```
-- ✅ Эффективно для потока
-- ✅ Сообщения доставляются автоматически
+### 📝 Фраза для интервью
+> "Producer отправляет сообщение в Exchange с routing key. Exchange по правилам binding направляет сообщение в нужную Queue. Consumer подписывается на Queue и обрабатывает сообщения. Channel — это легковесное виртуальное соединение внутри TCP connection."
 
 ---
 
-## Виды Exchanges
+## 3. Типы Exchange
 
-### Fanout
-```
-Exchange ─┬─► Queue1
-          ├─► Queue2
-          └─► Queue3
-```
-Все сообщения во все привязанные queues.
+### 🎯 Что спрашивают
+> "Какие типы Exchange есть в RabbitMQ?"
 
-### Direct
+### Fanout — всем подряд
+```
+Exchange ─┬─► Queue1 (все сообщения)
+          ├─► Queue2 (все сообщения)
+          └─► Queue3 (все сообщения)
+```
+**Use case**: Уведомления всем сервисам, логирование
+
+### Direct — точное совпадение
 ```
 Exchange ─── routing_key="error" ──► error_queue
-         └── routing_key="info" ───► info_queue
+         └── routing_key="info"  ──► info_queue
 ```
-Точное совпадение routing key.
+**Use case**: Разные обработчики для разных типов событий
 
-### Topic
+### Topic — паттерны
 ```
-Exchange ─── "order.*.created" ──► new_orders_queue
-         └── "order.#" ──────────► all_orders_queue
+Exchange ─── "order.*.created" ──► new_orders (order.book.created, order.phone.created)
+         └── "order.#"         ──► all_orders (любые order.*)
 ```
-Pattern matching: `*` = одно слово, `#` = ноль или более слов.
+- `*` — ровно одно слово
+- `#` — ноль или более слов
 
-### Headers
-Маршрутизация по заголовкам, не routing key.
+**Use case**: Гибкая подписка на события
 
-```python
-# Fanout
-channel.exchange_declare(exchange='logs', exchange_type='fanout')
-
-# Direct
-channel.exchange_declare(exchange='direct_logs', exchange_type='direct')
-channel.queue_bind(queue='errors', exchange='direct_logs', routing_key='error')
-
-# Topic
-channel.exchange_declare(exchange='topic_logs', exchange_type='topic')
-channel.queue_bind(queue='all_orders', exchange='topic_logs', routing_key='order.#')
-```
+### 📝 Фраза для интервью
+> "Fanout рассылает всем подписчикам. Direct — точное совпадение routing key. Topic — паттерны со звёздочкой и решёткой. Выбор зависит от задачи: fanout для broadcast, direct для простой маршрутизации, topic для гибких подписок."
 
 ---
 
-## Acknowledgements
+## 4. Acknowledgements — подтверждения
 
-### Basic.Ack (подтверждение)
+### 🎯 Что спрашивают
+> "Как гарантировать, что сообщение обработано?"
+
+### Проблема
+Что если consumer получил сообщение и упал до обработки?
+
+### Решение — ручные подтверждения
+
 ```python
 def callback(ch, method, properties, body):
     try:
-        process(body)
-        ch.basic_ack(delivery_tag=method.delivery_tag)
+        process(body)  # Обрабатываем
+        ch.basic_ack(delivery_tag=method.delivery_tag)  # ✅ Успех
     except Exception:
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-```
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)  # ❌ Вернуть в очередь
 
-### Basic.Reject (отклонение одного)
-```python
-ch.basic_reject(delivery_tag=method.delivery_tag, requeue=False)
-```
-
-### Basic.Nack (отклонение нескольких)
-```python
-ch.basic_nack(delivery_tag=method.delivery_tag, multiple=True, requeue=True)
-```
-
-### Auto-ack
-```python
-# ❌ Опасно: сообщение удаляется сразу при доставке
-channel.basic_consume(queue='q', on_message_callback=cb, auto_ack=True)
+# ❌ Опасно: auto_ack=True — сообщение удаляется при получении
+channel.basic_consume(queue='q', on_message_callback=callback, auto_ack=True)
 
 # ✅ Безопасно: ручное подтверждение
-channel.basic_consume(queue='q', on_message_callback=cb, auto_ack=False)
+channel.basic_consume(queue='q', on_message_callback=callback, auto_ack=False)
 ```
+
+### Типы подтверждений
+- **ack** — обработано успешно, удалить
+- **nack** — ошибка, можно вернуть в очередь (requeue=True)
+- **reject** — отклонить (для одного сообщения)
+
+### 📝 Фраза для интервью
+> "При auto_ack сообщение удаляется сразу при доставке — если consumer упадёт, данные потеряются. С ручным ack сообщение удаляется только после подтверждения обработки. При ошибке можно сделать nack с requeue для повторной попытки."
 
 ---
 
-## Prefetch и Transactions
+## 5. Prefetch — контроль нагрузки
 
-### Prefetch (QoS)
+### 🎯 Что спрашивают
+> "Как распределить нагрузку между consumer'ами?"
+
+### Проблема
+```
+Consumer1 [████████░░] — обрабатывает 8 тяжёлых задач
+Consumer2 [░░░░░░░░░░] — простаивает
+```
+RabbitMQ по умолчанию раздаёт round-robin, не учитывая занятость.
+
+### Решение — prefetch_count
+
 ```python
-# Ограничить количество неподтверждённых сообщений
-channel.basic_qos(prefetch_count=10)  # Максимум 10 без ack
+channel.basic_qos(prefetch_count=1)  # Не более 1 unacked сообщения
 ```
 
-**Рекомендации**:
-- `prefetch_count=1` — равномерное распределение
-- `prefetch_count=10-50` — баланс производительности
+Теперь Consumer1 не получит новое сообщение, пока не сделает ack.
 
-### Consumer Transactions
-```python
-channel.tx_select()  # Начать транзакцию
+### Выбор значения
+- `prefetch_count=1` — равномерное распределение, но много round-trips
+- `prefetch_count=10-50` — баланс производительности и распределения
+- Зависит от времени обработки сообщения
 
-try:
-    # Операции
-    channel.tx_commit()
-except:
-    channel.tx_rollback()
-```
-❌ Транзакции медленные, используйте publisher confirms.
+### 📝 Фраза для интервью
+> "Prefetch ограничивает количество unacked сообщений на consumer. С prefetch=1 каждый consumer получает новое сообщение только после подтверждения предыдущего. Это обеспечивает честное распределение нагрузки."
 
 ---
 
-## Message Properties и Priority
+## 6. Dead Letter Exchange (DLX)
 
-### Properties
+### 🎯 Что спрашивают
+> "Что делать с сообщениями, которые не удалось обработать?"
+
+### Проблема
+Если сообщение всегда вызывает ошибку, оно будет ходить по кругу вечно.
+
+### Решение — Dead Letter Exchange
+Сообщения "мёртвых писем" — тех, что не удалось доставить.
+
 ```python
-properties = pika.BasicProperties(
-    content_type='application/json',
-    delivery_mode=2,  # Persistent
-    priority=5,
-    expiration='60000',  # TTL в мс
-    headers={'x-retry-count': 0},
-    correlation_id='request-123',
-    reply_to='callback_queue'
-)
-channel.basic_publish(exchange='', routing_key='q', body=msg, properties=properties)
-```
-
-### Priority Queue
-```python
-# Объявить очередь с приоритетами
-channel.queue_declare(
-    queue='priority_queue',
-    arguments={'x-max-priority': 10}
-)
-
-# Отправить с приоритетом
-props = pika.BasicProperties(priority=8)
-channel.basic_publish(exchange='', routing_key='priority_queue', body=msg, properties=props)
-```
-
----
-
-## Dead Letter Exchanges
-
-### Настройка DLX
-```python
-# Dead Letter Exchange
+# DLX — куда отправлять проблемные сообщения
 channel.exchange_declare(exchange='dlx', exchange_type='direct')
 channel.queue_declare(queue='dead_letters')
 channel.queue_bind(queue='dead_letters', exchange='dlx', routing_key='dead')
 
 # Основная очередь с DLX
 channel.queue_declare(
-    queue='main_queue',
+    queue='orders',
     arguments={
         'x-dead-letter-exchange': 'dlx',
         'x-dead-letter-routing-key': 'dead'
@@ -268,193 +226,142 @@ channel.queue_declare(
 ```
 
 ### Когда сообщение попадает в DLX
-- Rejected с `requeue=False`
-- TTL истёк
-- Queue переполнена (`x-max-length`)
+1. **Reject/Nack с requeue=False**
+2. **TTL истёк**
+3. **Очередь переполнена** (x-max-length)
 
-### Use Case: Retry механизм
+### Use Case: Retry с задержкой
 ```
-main_queue → DLX → retry_queue (TTL) → main_queue
+main_queue → reject → DLX → retry_queue (TTL=60s) → main_queue
 ```
+
+### 📝 Фраза для интервью
+> "Dead Letter Exchange — это 'кладбище' для проблемных сообщений. Сообщения попадают туда при reject, истечении TTL или переполнении очереди. Это позволяет анализировать ошибки и реализовать retry-логику."
 
 ---
 
-## Автоматическое истечение
+## 7. Durability — сохранность данных
 
-### Message TTL
+### 🎯 Что спрашивают
+> "Что будет с сообщениями при перезапуске RabbitMQ?"
+
+### Три уровня durability
+
+1. **Durable Queue** — очередь сохраняется при рестарте
 ```python
-# Per-message TTL
-props = pika.BasicProperties(expiration='60000')  # 60 сек
-
-# Per-queue TTL
-channel.queue_declare(queue='ttl_queue', arguments={'x-message-ttl': 60000})
+channel.queue_declare(queue='orders', durable=True)
 ```
 
-### Queue TTL
+2. **Persistent Messages** — сообщения сохраняются на диск
 ```python
-# Очередь удалится через 10 минут неактивности
-channel.queue_declare(queue='temp', arguments={'x-expires': 600000})
+properties = pika.BasicProperties(delivery_mode=2)  # 2 = persistent
+channel.basic_publish(exchange='', routing_key='orders', 
+                      body=msg, properties=properties)
 ```
 
----
-
-## Temporary и Permanent Queues
-
-### Temporary Queues
-```python
-# Auto-delete: удаляется когда нет consumers
-channel.queue_declare(queue='temp', auto_delete=True)
-
-# Exclusive: только для этого connection
-result = channel.queue_declare(queue='', exclusive=True)
-temp_queue = result.method.queue
-```
-
-### Permanent Queues
-```python
-channel.queue_declare(
-    queue='orders',
-    durable=True,  # Выживает рестарт
-    arguments={
-        'x-max-length': 10000,  # Макс. сообщений
-        'x-max-length-bytes': 104857600,  # Макс. 100MB
-        'x-overflow': 'reject-publish'  # Отклонять новые
-    }
-)
-```
-
----
-
-## Speed vs Guaranteed Delivery
-
-| Настройка | Скорость | Надёжность |
-|-----------|----------|------------|
-| `delivery_mode=1` (transient) | ⚡⚡⚡ | ❌ |
-| `delivery_mode=2` (persistent) | ⚡⚡ | ✅ |
-| Publisher confirms | ⚡ | ✅✅ |
-| Transactions | ⚡ | ✅✅✅ |
-
-### Publisher Confirms
+3. **Publisher Confirms** — подтверждение от брокера
 ```python
 channel.confirm_delivery()
-
-try:
-    channel.basic_publish(exchange='', routing_key='q', body=msg, mandatory=True)
-    print("Сообщение доставлено")
-except pika.exceptions.UnroutableError:
-    print("Сообщение не доставлено")
+channel.basic_publish(...)  # Бросит exception если не доставлено
 ```
 
-### Best Practices
-- **Высокая скорость**: transient + auto_ack
-- **Надёжность**: persistent + manual ack + confirms + durable queue
+### Чек-лист для надёжной доставки
+- ✅ `durable=True` для очереди
+- ✅ `delivery_mode=2` для сообщений
+- ✅ Publisher confirms
+- ✅ Manual ack у consumer
+
+### 📝 Фраза для интервью
+> "Для сохранности нужны durable очереди и persistent сообщения. Но это не гарантирует доставку — нужны ещё publisher confirms и ручные ack у consumer. Это снижает производительность, поэтому выбор зависит от требований."
 
 ---
 
-## Virtual Hosts
+## 8. Масштабирование и HA
 
-### Изоляция окружений
-```bash
-# Создание vhost
-rabbitmqctl add_vhost production
-rabbitmqctl add_vhost staging
+### 🎯 Что спрашивают
+> "Как масштабировать RabbitMQ?"
 
-# Права пользователя
-rabbitmqctl set_permissions -p production myuser ".*" ".*" ".*"
-```
+### Масштабирование Consumer'ов
+Просто запускаем больше consumer'ов — RabbitMQ распределит нагрузку.
 
-### Подключение
-```python
-credentials = pika.PlainCredentials('user', 'password')
-connection = pika.BlockingConnection(
-    pika.ConnectionParameters('localhost', virtual_host='production', credentials=credentials)
-)
-```
-
----
-
-## Сжатие сообщений
-
-```python
-import gzip
-import json
-
-def publish_compressed(channel, exchange, routing_key, data):
-    json_data = json.dumps(data).encode()
-    compressed = gzip.compress(json_data)
-    
-    props = pika.BasicProperties(
-        content_type='application/json',
-        content_encoding='gzip'
-    )
-    channel.basic_publish(exchange=exchange, routing_key=routing_key, 
-                          body=compressed, properties=props)
-
-def decompress_message(body, properties):
-    if properties.content_encoding == 'gzip':
-        return json.loads(gzip.decompress(body))
-    return json.loads(body)
-```
-
----
-
-## HA Queues
-
-### Mirrored Queues (Classic)
-```bash
-# Политика для всех очередей
-rabbitmqctl set_policy ha-all ".*" '{"ha-mode":"all"}' --apply-to queues
-
-# Зеркалирование на N узлов
-rabbitmqctl set_policy ha-two "^ha\." '{"ha-mode":"exactly","ha-params":2}' --apply-to queues
-```
-
-### Quorum Queues (Рекомендуется)
-```python
-channel.queue_declare(
-    queue='quorum_queue',
-    arguments={'x-queue-type': 'quorum'}
-)
-```
-
----
-
-## Scaling RabbitMQ
-
-### Cluster
+### Clustering — несколько узлов
 ```bash
 # На node2
 rabbitmqctl stop_app
-rabbitmqctl reset
 rabbitmqctl join_cluster rabbit@node1
 rabbitmqctl start_app
 ```
 
-### Shovel Plugin
-```bash
-rabbitmq-plugins enable rabbitmq_shovel
-rabbitmq-plugins enable rabbitmq_shovel_management
+### Quorum Queues (рекомендуется)
+```python
+channel.queue_declare(
+    queue='orders',
+    arguments={'x-queue-type': 'quorum'}
+)
 ```
+Данные реплицируются на несколько узлов, автоматический failover.
 
-Конфигурация через Management UI или rabbitmq.conf.
+### Federation — между дата-центрами
+Для географически распределённых систем.
+
+### 📝 Фраза для интервью
+> "Consumer'ы масштабируются добавлением инстансов. Для HA используем кластер с quorum queues — данные реплицируются, при отказе узла работа продолжается. Federation — для связи между дата-центрами."
 
 ---
 
-## Cross-cluster Distribution
+## 🎤 Частые вопросы на интервью
 
-### Federation Plugin
-```bash
-rabbitmq-plugins enable rabbitmq_federation
-rabbitmq-plugins enable rabbitmq_federation_management
-```
+### "Зачем нужен Message Broker?"
+> "Развязка сервисов, асинхронная обработка, гарантированная доставка, балансировка нагрузки, устойчивость к пиковым нагрузкам."
 
-### Use Cases
-- Географически распределённые системы
-- Репликация между дата-центрами
-- Multi-region архитектура
+### "RabbitMQ vs Kafka?"
+> "RabbitMQ — традиционный брокер, умный роутинг, push-модель, сообщение удаляется после обработки. Kafka — distributed log, pull-модель, сообщения хранятся долго, для event streaming и replay событий."
 
-### Альтернативы RabbitMQ
-- **Apache Kafka** — для event streaming
-- **Amazon SQS** — managed queue
-- **Redis Streams** — простая очередь
-- **NATS** — lightweight messaging
+### "Как гарантировать exactly-once?"
+> "RabbitMQ гарантирует at-least-once или at-most-once. Для exactly-once нужна идемпотентность на стороне consumer — например, проверка по уникальному ID сообщения перед обработкой."
+
+### "Что такое exchange default?"
+> "Пустая строка '' — default exchange. Сообщения направляются напрямую в очередь, имя которой совпадает с routing_key. Удобно для простых случаев."
+
+### "Как обрабатывать poison messages?"
+> "Сообщения, которые всегда вызывают ошибку. Решение: счётчик retry в headers, после N попыток отправлять в DLX для ручного анализа."
+
+### "Что такое Virtual Host?"
+> "Логическое разделение брокера. У каждого vhost свои exchanges, queues, permissions. Используется для изоляции окружений: production, staging, разные приложения."
+
+### "Как работает round-robin в RabbitMQ?"
+> "По умолчанию сообщения распределяются по consumer'ам по очереди, независимо от их загрузки. Для честного распределения нужен prefetch_count=1."
+
+### "Что такое Channel и зачем он нужен?"
+> "Виртуальное соединение внутри TCP connection. Создание connection дорогое, поэтому мультиплексируем через channels. Типично: один channel на thread."
+
+### "Как реализовать RPC через RabbitMQ?"
+> "Отправляем запрос с correlation_id и reply_to (очередь для ответа). Сервер обрабатывает и отправляет ответ в reply_to с тем же correlation_id."
+
+### "Что такое Quorum Queues?"
+> "Очереди с репликацией на несколько узлов через Raft consensus. Заменяют mirrored queues. Надёжнее и производительнее для HA."
+
+### "Как мониторить RabbitMQ?"
+> "Management plugin (веб-интерфейс), Prometheus + rabbitmq_exporter, rabbitmqctl команды. Отслеживать: queue depth, consumer count, message rates."
+
+### "Что происходит когда очередь переполняется?"
+> "Зависит от настроек: reject-publish (отклонять новые), drop-head (удалять старые). При x-max-length сообщения могут идти в DLX."
+
+### "Как обеспечить порядок сообщений?"
+> "Один consumer на очередь гарантирует порядок. При нескольких consumer'ах — использовать consistent hashing exchange или разные очереди по ключу."
+
+### "Что такое Lazy Queues?"
+> "Очереди, которые хранят сообщения на диске, не в памяти. Медленнее, но позволяют хранить миллионы сообщений без исчерпания RAM."
+
+### "RabbitMQ vs Amazon SQS?"
+> "RabbitMQ: self-hosted, сложный роутинг, больше контроля. SQS: managed, проще, интеграция с AWS, меньше операционных затрат."
+
+### "Как масштабировать producer'ов?"
+> "Producer'ы stateless, просто запускаем больше. Важно использовать connection pooling и не создавать connection на каждое сообщение."
+
+### "Что такое Shovel plugin?"
+> "Перемещает сообщения между брокерами. Используется для связи кластеров, миграции данных, backup очередей."
+
+### "Как реализовать delayed messages?"
+> "Через DLX с TTL: сообщение в очередь с TTL, после истечения попадает в основную очередь через DLX. Или плагин rabbitmq_delayed_message_exchange."
+

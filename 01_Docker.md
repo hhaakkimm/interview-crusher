@@ -360,3 +360,45 @@ docker-compose down       # Остановить всё
 
 ### "Что такое health check?"
 > "Проверка здоровья контейнера. Docker периодически выполняет команду и помечает контейнер healthy/unhealthy. Это нужно для оркестраторов чтобы перезапускать нездоровые контейнеры."
+
+### "Чем ENTRYPOINT отличается от CMD?"
+> "CMD — команда по умолчанию, легко перезаписывается при docker run. ENTRYPOINT — основная команда, CMD становится её аргументами. ENTRYPOINT для исполняемых файлов, CMD для параметров."
+
+### "Что такое Docker Daemon?"
+> "Фоновый процесс, который управляет Docker объектами: образами, контейнерами, сетями, volumes. Docker CLI общается с daemon через REST API."
+
+### "Как уменьшить размер образа?"
+> "Использовать slim/alpine базовые образы, multistage builds, объединять RUN команды, удалять кеш пакетных менеджеров, использовать .dockerignore."
+
+### "Что происходит при docker run?"
+> "Docker проверяет наличие образа локально, если нет — скачивает из registry. Создаёт writable layer поверх образа, настраивает сеть и storage, запускает процесс из CMD/ENTRYPOINT."
+
+### "Как отладить контейнер который сразу падает?"
+> "docker logs container_name для просмотра логов. docker run -it image sh для запуска с интерактивной оболочкой. docker run --entrypoint sh image для переопределения entrypoint."
+
+### "Что такое Docker context?"
+> "Все файлы и папки, которые отправляются Docker daemon при сборке. Большой context замедляет сборку. Используйте .dockerignore для исключения ненужных файлов."
+
+### "Как обновить контейнер без downtime?"
+> "Blue-green deployment: запустить новый контейнер, переключить traffic, остановить старый. Или rolling update в Docker Swarm/Kubernetes."
+
+### "Docker Swarm vs Kubernetes?"
+> "Swarm встроен в Docker, проще в настройке, для небольших кластеров. Kubernetes более мощный, больше возможностей, industry standard, но сложнее."
+
+### "Что такое dangling images?"
+> "Образы без тега, обычно остаются после пересборки. Занимают место. Удалить: docker image prune. Все неиспользуемые: docker system prune."
+
+### "Как ограничить ресурсы контейнера?"
+> "Флаги --memory, --cpus при docker run. Например: docker run --memory=512m --cpus=0.5 nginx. Важно для production чтобы один контейнер не съел все ресурсы."
+
+### "Что такое Docker registry?"
+> "Хранилище образов. Docker Hub — публичный registry. Можно поднять приватный (Harbor, GitLab Registry) или использовать облачные (ECR, GCR, ACR)."
+
+### "Как работает docker build cache?"
+> "Каждая инструкция создаёт слой с хешем. Если файлы и команда не изменились — используется кеш. При изменении слоя все последующие пересобираются. Поэтому COPY package.json перед COPY ."
+
+### "Можно ли запустить GUI приложение в Docker?"
+> "Да, через X11 forwarding или VNC. На Linux: docker run -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix. Но это редкий use case."
+
+### "Что такое OCI?"
+> "Open Container Initiative — стандарт для container runtime и image format. Docker соответствует OCI, поэтому образы совместимы с другими runtime (containerd, CRI-O)."

@@ -1,350 +1,225 @@
-# Web Frameworks - Полное руководство
+# Web Frameworks - Руководство для технического интервью
 
-## Содержание
-1. [Application Settings, Exceptions](#application-settings-exceptions)
-2. [Request, Response, Routing, Views, Handlers/Controllers](#request-response-routing)
-3. [Database, ORM, Migrations](#database-orm-migrations)
-4. [Templates (Django, Jinja2)](#templates)
-5. [Listeners (Receiver/Signals), Middleware](#listeners-и-middleware)
-6. [Data Validation](#data-validation)
-7. [Customize Admin Site](#customize-admin-site)
-8. [Security (Auth, CORS, SQL Injection)](#security)
-9. [Internationalization and Localization](#i18n-и-l10n)
-10. [Performance and Optimization](#performance-и-optimization)
-11. [Websockets](#websockets)
-12. [Background Tasks (Asyncio, Celery, Dramatiq)](#background-tasks)
-13. [Deployment (ASGI, WSGI, Nginx, Gunicorn)](#deployment)
-14. [Cache](#cache)
-15. [Streaming](#streaming)
+> 💡 **Как объяснить웹 фреймворки на интервью:**
+> "Web framework — это скелет веб-приложения. Он берёт на себя рутину: маршрутизацию URL, обработку запросов, взаимодействие с базой, безопасность. Я пишу бизнес-логику, а фреймворк — инфраструктуру."
 
 ---
 
-## Application Settings, Exceptions
+## 1. Request → Response цикл
 
-### Конфигурация приложения
+### 🎯 Что спрашивают на интервью
+> "Опишите путь HTTP запроса в веб-приложении"
 
-#### Django
-```python
-# settings.py
-DEBUG = os.environ.get('DEBUG', 'False') == 'True'
-SECRET_KEY = os.environ.get('SECRET_KEY')
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '').split(',')
+### Простое объяснение
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME'),
-        'USER': os.environ.get('DB_USER'),
-        'PASSWORD': os.environ.get('DB_PASSWORD'),
-        'HOST': os.environ.get('DB_HOST', 'localhost'),
-    }
-}
+```
+Пользователь → Nginx → Gunicorn → Django/FastAPI → База данных
+                                        ↓
+Пользователь ← Nginx ← Gunicorn ← Response ← ORM ←──┘
 ```
 
-#### FastAPI
-```python
-from pydantic_settings import BaseSettings
+1. **Request приходит** от браузера
+2. **Nginx** (reverse proxy) принимает, может отдать статику
+3. **Gunicorn/Uvicorn** (WSGI/ASGI сервер) передаёт в приложение
+4. **Routing** определяет какой handler/view обработает
+5. **Middleware** обрабатывает до/после (логирование, auth)
+6. **Handler/View** — ваша бизнес-логика
+7. **ORM** — запросы к базе данных
+8. **Response** возвращается обратно
 
-class Settings(BaseSettings):
-    debug: bool = False
-    secret_key: str
-    database_url: str
-    
-    class Config:
-        env_file = ".env"
-
-settings = Settings()
-```
-
-### Обработка исключений
-
-#### Django
-```python
-# views.py
-from django.http import JsonResponse
-
-def custom_exception_handler(request, exception):
-    return JsonResponse({'error': str(exception)}, status=500)
-
-# В urls.py
-handler500 = 'myapp.views.custom_exception_handler'
-```
-
-#### FastAPI
-```python
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
-
-app = FastAPI()
-
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    return JSONResponse(status_code=500, content={"error": str(exc)})
-
-class CustomException(Exception):
-    def __init__(self, message: str, code: int = 400):
-        self.message = message
-        self.code = code
-
-@app.exception_handler(CustomException)
-async def custom_exception_handler(request, exc):
-    return JSONResponse(status_code=exc.code, content={"error": exc.message})
-```
-
-### Best Practices
-- ✅ Храните секреты в переменных окружения
-- ✅ Разделяйте настройки dev/staging/prod
-- ✅ Централизованная обработка ошибок
-- ✅ Логируйте все исключения
+### 📝 Фраза для интервью
+> "Request проходит через reverse proxy, WSGI/ASGI сервер, middleware слой, попадает в view/handler по routing, выполняет логику (возможно с ORM), и response возвращается обратно через те же слои."
 
 ---
 
-## Request, Response, Routing
+## 2. Routing и Handlers
 
-### Django Views
+### 🎯 Что спрашивают
+> "Как работает маршрутизация?"
+
+### Django
+
 ```python
-# Function-based view
-from django.http import JsonResponse
-
-def get_user(request, user_id):
-    if request.method == 'GET':
-        user = User.objects.get(id=user_id)
-        return JsonResponse({'name': user.name})
-
-# Class-based view
-from django.views import View
-
-class UserView(View):
-    def get(self, request, user_id):
-        user = User.objects.get(id=user_id)
-        return JsonResponse({'name': user.name})
-
-# urls.py
+# urls.py — централизованная маршрутизация
 urlpatterns = [
-    path('users/<int:user_id>/', get_user),
-    path('users-cbv/<int:user_id>/', UserView.as_view()),
+    path('users/', views.user_list),
+    path('users/<int:pk>/', views.user_detail),
+    path('api/', include('api.urls')),  # Подключаем другой файл
 ]
+
+# views.py
+def user_detail(request, pk):
+    user = get_object_or_404(User, pk=pk)
+    return JsonResponse({'name': user.name})
 ```
 
 ### FastAPI
+
 ```python
-from fastapi import FastAPI, Path, Query
-from pydantic import BaseModel
-
-app = FastAPI()
-
-class UserCreate(BaseModel):
-    name: str
-    email: str
-
+# Декораторы прямо над функцией
 @app.get("/users/{user_id}")
-async def get_user(user_id: int = Path(..., gt=0)):
+async def get_user(user_id: int):
     return {"user_id": user_id}
 
 @app.post("/users/", status_code=201)
 async def create_user(user: UserCreate):
     return {"name": user.name}
-
-@app.get("/search/")
-async def search(q: str = Query(..., min_length=3)):
-    return {"query": q}
 ```
 
-### Flask
-```python
-from flask import Flask, request, jsonify
+### Разница в подходах
+- **Django**: URLconf отдельно от view, всё в одном месте
+- **FastAPI**: маршруты как декораторы, рядом с кодом
 
-app = Flask(__name__)
-
-@app.route('/users/<int:user_id>', methods=['GET'])
-def get_user(user_id):
-    return jsonify({'user_id': user_id})
-
-@app.route('/users/', methods=['POST'])
-def create_user():
-    data = request.get_json()
-    return jsonify(data), 201
-```
+### 📝 Фраза для интервью
+> "Router сопоставляет URL с handler'ом. В Django маршруты централизованы в urls.py, во Flask/FastAPI — декораторы над функциями. Обе стратегии валидны, Django лучше для больших проектов, декораторы — для микросервисов."
 
 ---
 
-## Database, ORM, Migrations
+## 3. ORM и Миграции
 
-### Django ORM
+### 🎯 Что спрашивают
+> "Что такое ORM и зачем нужны миграции?"
+
+### ORM простым языком
+Вместо SQL пишем Python:
+
 ```python
-# models.py
-from django.db import models
+# SQL
+cursor.execute("SELECT * FROM users WHERE age > 18")
 
-class User(models.Model):
-    name = models.CharField(max_length=100)
-    email = models.EmailField(unique=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    
-    class Meta:
-        indexes = [models.Index(fields=['email'])]
+# ORM (Django)
+users = User.objects.filter(age__gt=18)
 
-# Queries
-users = User.objects.filter(name__icontains='иван')
-user = User.objects.get(id=1)
-User.objects.create(name='Иван', email='ivan@mail.ru')
+# ORM (SQLAlchemy)
+users = session.query(User).filter(User.age > 18).all()
 ```
 
-### SQLAlchemy
-```python
-from sqlalchemy import create_engine, Column, Integer, String
-from sqlalchemy.orm import declarative_base, sessionmaker
+### Преимущества ORM
+- ✅ Не пишем SQL вручную
+- ✅ Защита от SQL injection (параметризация)
+- ✅ Работаем с объектами Python
+- ✅ Абстракция от конкретной СУБД
 
-Base = declarative_base()
+### Недостатки
+- ❌ Скрытые запросы (N+1 problem)
+- ❌ Сложные запросы проще писать на SQL
+- ❌ Небольшой overhead
 
-class User(Base):
-    __tablename__ = 'users'
-    id = Column(Integer, primary_key=True)
-    name = Column(String(100))
-    email = Column(String(100), unique=True)
+### Миграции — версионирование схемы
 
-engine = create_engine('postgresql://user:pass@localhost/db')
-Session = sessionmaker(bind=engine)
-session = Session()
-
-# CRUD
-session.add(User(name='Иван', email='ivan@mail.ru'))
-session.commit()
-
-users = session.query(User).filter(User.name.like('%иван%')).all()
-```
-
-### Migrations
-
-#### Django
 ```bash
-python manage.py makemigrations
-python manage.py migrate
-python manage.py migrate myapp 0003  # До конкретной миграции
-```
+# Django
+python manage.py makemigrations  # Создать миграцию
+python manage.py migrate         # Применить
 
-#### Alembic (SQLAlchemy)
-```bash
-alembic init migrations
-alembic revision --autogenerate -m "Add users table"
+# Alembic (SQLAlchemy)
+alembic revision --autogenerate -m "Add users"
 alembic upgrade head
-alembic downgrade -1
 ```
+
+### N+1 Problem — частый вопрос!
+
+```python
+# ❌ N+1: 1 запрос на посты + N запросов на авторов
+for post in Post.objects.all():
+    print(post.author.name)  # Каждый раз запрос!
+
+# ✅ 2 запроса с select_related (JOIN)
+for post in Post.objects.select_related('author').all():
+    print(post.author.name)  # Уже загружено
+```
+
+### 📝 Фраза для интервью
+> "ORM мапит таблицы на классы Python. Преимущества: удобство, защита от SQL injection. Недостаток — скрытые запросы, особенно N+1 problem. Решается через select_related/prefetch_related. Миграции — это версионирование схемы БД, позволяющее откатываться."
 
 ---
 
-## Templates
+## 4. Middleware
 
-### Django Templates
-```html
-<!-- base.html -->
-<!DOCTYPE html>
-<html>
-<head><title>{% block title %}{% endblock %}</title></head>
-<body>
-    {% block content %}{% endblock %}
-</body>
-</html>
+### 🎯 Что спрашивают
+> "Что такое Middleware?"
 
-<!-- user.html -->
-{% extends "base.html" %}
-{% block title %}{{ user.name }}{% endblock %}
-{% block content %}
-    <h1>{{ user.name }}</h1>
-    {% for post in posts %}
-        <p>{{ post.title|truncatewords:20 }}</p>
-    {% empty %}
-        <p>Нет постов</p>
-    {% endfor %}
-{% endblock %}
+### Простое объяснение
+Middleware — это "слои лука" вокруг вашего handler:
+
+```
+Request → [Auth MW] → [Logging MW] → [CORS MW] → Handler
+                                                    ↓
+Response ← [Auth MW] ← [Logging MW] ← [CORS MW] ← Response
 ```
 
-### Jinja2
+Каждый middleware может:
+- Обработать request ДО handler
+- Обработать response ПОСЛЕ handler
+- Прервать цепочку (например, auth failed)
+
+### Пример: логирование
+
 ```python
-from jinja2 import Environment, FileSystemLoader
-
-env = Environment(loader=FileSystemLoader('templates'))
-template = env.get_template('user.html')
-html = template.render(user=user, posts=posts)
-```
-
-```html
-<!-- Jinja2 template -->
-{% macro input(name, type='text') %}
-    <input type="{{ type }}" name="{{ name }}">
-{% endmacro %}
-
-{{ input('email', 'email') }}
-```
-
----
-
-## Listeners и Middleware
-
-### Django Signals
-```python
-from django.db.models.signals import post_save
-from django.dispatch import receiver
-
-@receiver(post_save, sender=User)
-def user_created(sender, instance, created, **kwargs):
-    if created:
-        send_welcome_email(instance.email)
-```
-
-### Django Middleware
-```python
+# Django
 class LoggingMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        print(f"Request: {request.path}")
+        print(f"[REQ] {request.method} {request.path}")
         response = self.get_response(request)
-        print(f"Response: {response.status_code}")
+        print(f"[RES] {response.status_code}")
         return response
 
-# settings.py
-MIDDLEWARE = ['myapp.middleware.LoggingMiddleware', ...]
+# FastAPI
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    print(f"[REQ] {request.method} {request.url}")
+    response = await call_next(request)
+    print(f"[RES] {response.status_code}")
+    return response
 ```
 
-### FastAPI Middleware
-```python
-from fastapi import FastAPI
-from starlette.middleware.base import BaseHTTPMiddleware
+### Типичные Middleware
+- **Auth**: проверка токенов
+- **CORS**: заголовки для cross-origin
+- **Logging**: логирование запросов
+- **Rate Limiting**: ограничение запросов
+- **Compression**: gzip response
 
-class LoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        print(f"Request: {request.url}")
-        response = await call_next(request)
-        return response
-
-app.add_middleware(LoggingMiddleware)
-```
+### 📝 Фраза для интервью
+> "Middleware — это слой обработки до и после handler. Request проходит через цепочку middleware туда, response — обратно. Используется для cross-cutting concerns: логирование, аутентификация, CORS."
 
 ---
 
-## Data Validation
+## 5. Валидация данных
 
-### Pydantic (FastAPI)
+### 🎯 Что спрашивают
+> "Как валидировать входящие данные?"
+
+### Pydantic (FastAPI) — современный подход
+
 ```python
-from pydantic import BaseModel, EmailStr, validator, Field
-from typing import Optional
+from pydantic import BaseModel, EmailStr, Field, validator
 
 class UserCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=50)
     email: EmailStr
-    age: Optional[int] = Field(None, ge=18, le=120)
+    age: int = Field(..., ge=18, le=120)
     
     @validator('name')
     def name_must_be_capitalized(cls, v):
         return v.title()
 
-# Использование
-user = UserCreate(name='иван', email='ivan@mail.ru')
-print(user.name)  # 'Иван'
+# Автоматическая валидация
+@app.post("/users/")
+async def create_user(user: UserCreate):  # ← Pydantic валидирует
+    return user
 ```
 
+**Преимущества:**
+- ✅ Декларативная валидация
+- ✅ Автоматическая документация (OpenAPI)
+- ✅ Type hints = самодокументирование
+
 ### Django Forms
+
 ```python
 from django import forms
 
@@ -354,178 +229,84 @@ class UserForm(forms.Form):
     
     def clean_name(self):
         name = self.cleaned_data['name']
-        if len(name) < 2:
-            raise forms.ValidationError("Слишком короткое имя")
-        return name.title()
+        if name.lower() == 'admin':
+            raise forms.ValidationError("Имя admin запрещено")
+        return name
 ```
+
+### 📝 Фраза для интервью
+> "Валидация обязательна для безопасности. Pydantic в FastAPI — декларативно, через аннотации типов. Django Forms — через классы форм. Важно валидировать на сервере, не доверяя клиенту."
 
 ---
 
-## Customize Admin Site
+## 6. Authentication и Authorization
 
-### Django Admin
+### 🎯 Что спрашивают
+> "Разница между authentication и authorization?"
+
+### Простое объяснение
+- **Authentication** (WHO): "Кто ты?" — проверка личности
+- **Authorization** (WHAT): "Что тебе можно?" — проверка прав
+
+### JWT Authentication (популярный подход)
+
 ```python
-from django.contrib import admin
+# Login → получаем токен
+@app.post("/login")
+def login(credentials: LoginRequest):
+    user = verify_password(credentials.username, credentials.password)
+    if not user:
+        raise HTTPException(401, "Неверные учётные данные")
+    
+    token = jwt.encode(
+        {"sub": user.id, "exp": datetime.utcnow() + timedelta(hours=1)},
+        SECRET_KEY
+    )
+    return {"access_token": token}
 
-@admin.register(User)
-class UserAdmin(admin.ModelAdmin):
-    list_display = ['name', 'email', 'created_at']
-    list_filter = ['created_at']
-    search_fields = ['name', 'email']
-    ordering = ['-created_at']
-    readonly_fields = ['created_at']
-    
-    fieldsets = [
-        ('Основное', {'fields': ['name', 'email']}),
-        ('Даты', {'fields': ['created_at'], 'classes': ['collapse']}),
-    ]
-    
-    actions = ['activate_users']
-    
-    @admin.action(description='Активировать пользователей')
-    def activate_users(self, request, queryset):
-        queryset.update(is_active=True)
+# Защищённый endpoint
+@app.get("/profile")
+def get_profile(token: str = Depends(oauth2_scheme)):
+    payload = jwt.decode(token, SECRET_KEY)
+    user_id = payload["sub"]
+    return get_user(user_id)
 ```
 
----
+### Безопасность — обязательные практики
 
-## Security
-
-### Authentication
 ```python
-# Django
-from django.contrib.auth import authenticate, login
-
-def login_view(request):
-    user = authenticate(username=username, password=password)
-    if user:
-        login(request, user)
-
-# FastAPI + JWT
-from fastapi_jwt_auth import AuthJWT
-
-@app.post('/login')
-def login(user: UserLogin, Authorize: AuthJWT = Depends()):
-    access_token = Authorize.create_access_token(subject=user.email)
-    return {"access_token": access_token}
-```
-
-### CORS
-```python
-# Django
-CORS_ALLOWED_ORIGINS = ["https://example.com"]
-
-# FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://example.com"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-```
-
-### SQL Injection Prevention
-```python
-# ❌ НИКОГДА
-query = f"SELECT * FROM users WHERE id = {user_id}"
+# ❌ SQL Injection
+query = f"SELECT * FROM users WHERE name = '{name}'"
 
 # ✅ Параметризованные запросы
-cursor.execute("SELECT * FROM users WHERE id = %s", [user_id])
+cursor.execute("SELECT * FROM users WHERE name = %s", [name])
 
-# ✅ ORM
-User.objects.filter(id=user_id)
+# ❌ Хранение паролей
+user.password = password
+
+# ✅ Хеширование
+from passlib.hash import bcrypt
+user.password_hash = bcrypt.hash(password)
 ```
+
+### 📝 Фраза для интервью
+> "Authentication — проверка личности (логин/пароль, JWT токен). Authorization — проверка прав (роли, permissions). JWT популярен для stateless API — токен содержит payload и подпись, сервер не хранит сессии."
 
 ---
 
-## I18n и L10n
+## 7. Background Tasks
 
-### Django
-```python
-# settings.py
-USE_I18N = True
-LANGUAGE_CODE = 'ru-ru'
-LANGUAGES = [('en', 'English'), ('ru', 'Русский')]
+### 🎯 Что спрашивают
+> "Как выполнять долгие операции?"
 
-# В шаблонах
-{% load i18n %}
-{% trans "Привет" %}
+### Проблема
+HTTP request должен ответить быстро (секунды). Что если нужно:
+- Отправить 1000 email?
+- Обработать видео?
+- Сгенерировать отчёт?
 
-# В коде
-from django.utils.translation import gettext as _
-message = _("Добро пожаловать")
+### Celery — стандартное решение
 
-# Генерация файлов перевода
-# python manage.py makemessages -l ru
-```
-
----
-
-## Performance и Optimization
-
-### Django
-```python
-# select_related (ForeignKey)
-users = User.objects.select_related('profile').all()
-
-# prefetch_related (ManyToMany)
-posts = Post.objects.prefetch_related('tags').all()
-
-# Пагинация
-from django.core.paginator import Paginator
-paginator = Paginator(users, 25)
-page = paginator.get_page(request.GET.get('page'))
-
-# Индексы
-class User(models.Model):
-    email = models.EmailField(db_index=True)
-```
-
-### FastAPI
-```python
-# Async endpoints
-@app.get("/users/")
-async def get_users():
-    users = await User.all()  # Tortoise ORM
-    return users
-```
-
----
-
-## Websockets
-
-### FastAPI
-```python
-from fastapi import WebSocket
-
-@app.websocket("/ws/{client_id}")
-async def websocket_endpoint(websocket: WebSocket, client_id: str):
-    await websocket.accept()
-    while True:
-        data = await websocket.receive_text()
-        await websocket.send_text(f"Получено: {data}")
-```
-
-### Django Channels
-```python
-# consumers.py
-from channels.generic.websocket import AsyncWebsocketConsumer
-
-class ChatConsumer(AsyncWebsocketConsumer):
-    async def connect(self):
-        await self.accept()
-    
-    async def receive(self, text_data):
-        await self.send(text_data=f"Echo: {text_data}")
-```
-
----
-
-## Background Tasks
-
-### Celery
 ```python
 # tasks.py
 from celery import Celery
@@ -534,51 +315,124 @@ app = Celery('tasks', broker='redis://localhost:6379')
 
 @app.task
 def send_email(to, subject, body):
-    # Отправка email
-    pass
+    # Долгая операция
+    smtp.send(to, subject, body)
+    return "sent"
 
-# Вызов
-send_email.delay('user@mail.ru', 'Тема', 'Текст')
-send_email.apply_async(args=['user@mail.ru', 'Тема', 'Текст'], countdown=60)
+# Вызов из view
+@app.post("/orders/")
+def create_order(order: Order):
+    save_order(order)
+    send_email.delay(order.email, "Заказ создан", "...")  # Асинхронно!
+    return {"status": "created"}
 ```
 
-### FastAPI Background Tasks
+### FastAPI BackgroundTasks — для простых случаев
+
 ```python
 from fastapi import BackgroundTasks
 
 def send_notification(email: str):
-    # Отправка
-    pass
+    # Простая задача
+    requests.post(webhook_url, json={"email": email})
 
 @app.post("/users/")
-async def create_user(user: UserCreate, background_tasks: BackgroundTasks):
+def create_user(user: User, background_tasks: BackgroundTasks):
+    save_user(user)
     background_tasks.add_task(send_notification, user.email)
-    return {"message": "Пользователь создан"}
+    return {"status": "created"}  # Ответ сразу
 ```
+
+### Когда что использовать
+| Решение | Когда |
+|---------|-------|
+| FastAPI BackgroundTasks | Простые задачи, не критично |
+| Celery | Надёжность, retry, мониторинг |
+| RabbitMQ + consumer | Микросервисная архитектура |
+
+### 📝 Фраза для интервью
+> "Долгие операции нельзя делать в request-response цикле. Celery с Redis/RabbitMQ — стандарт для Python. Задача ставится в очередь, worker обрабатывает асинхронно. Есть retry, мониторинг, приоритеты."
 
 ---
 
-## Deployment
+## 8. Caching
 
-### WSGI (Django/Flask)
+### 🎯 Что спрашивают
+> "Как ускорить веб-приложение?"
+
+### Уровни кеширования
+
+```
+Browser Cache → CDN → Nginx → Redis → Database
+                 ↑      ↑       ↑
+              Статика  Page   Query
+```
+
+### Redis/Memcached кеширование
+
+```python
+# Django
+from django.core.cache import cache
+
+def get_user(user_id):
+    key = f'user:{user_id}'
+    user = cache.get(key)
+    if not user:
+        user = User.objects.get(id=user_id)
+        cache.set(key, user, timeout=300)  # 5 минут
+    return user
+
+# Декоратор для view
+from django.views.decorators.cache import cache_page
+
+@cache_page(60 * 15)  # 15 минут
+def product_list(request):
+    products = Product.objects.all()
+    return render(request, 'products.html', {'products': products})
+```
+
+### Инвалидация — сложная проблема
+
+```python
+def update_user(user_id, data):
+    user = User.objects.get(id=user_id)
+    user.name = data['name']
+    user.save()
+    cache.delete(f'user:{user_id}')  # Инвалидация!
+```
+
+### 📝 Фраза для интервью
+> "Кеширование на нескольких уровнях: браузер, CDN, приложение (Redis), база (query cache). Главная проблема — инвалидация. При изменении данных кеш нужно очистить или обновить."
+
+---
+
+## 9. Deployment
+
+### 🎯 Что спрашивают
+> "Как развернуть Python веб-приложение?"
+
+### WSGI vs ASGI
+- **WSGI**: синхронный (Django, Flask)
+- **ASGI**: асинхронный (FastAPI, Django 3+)
+
 ```bash
-# Gunicorn
+# WSGI (Gunicorn)
 gunicorn myapp.wsgi:application -w 4 -b 0.0.0.0:8000
 
-# uWSGI
-uwsgi --http :8000 --wsgi-file myapp/wsgi.py --processes 4
+# ASGI (Uvicorn)
+uvicorn main:app --workers 4 --host 0.0.0.0 --port 8000
 ```
 
-### ASGI (FastAPI/Starlette)
-```bash
-# Uvicorn
-uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+### Типичный стек
 
-# Hypercorn
-hypercorn main:app --bind 0.0.0.0:8000 --workers 4
+```
+Internet → Nginx → Gunicorn/Uvicorn → Django/FastAPI → PostgreSQL
+              ↓                                            ↑
+           Static                                       Redis
 ```
 
-### Nginx
+### Nginx конфигурация
+
 ```nginx
 upstream app {
     server 127.0.0.1:8000;
@@ -586,85 +440,80 @@ upstream app {
 
 server {
     listen 80;
-    server_name example.com;
+    
+    location /static/ {
+        alias /app/static/;
+    }
     
     location / {
         proxy_pass http://app;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
-    
-    location /static/ {
-        alias /app/static/;
-    }
 }
 ```
 
----
-
-## Cache
-
-### Django
-```python
-# settings.py
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-        'LOCATION': 'redis://localhost:6379',
-    }
-}
-
-# Использование
-from django.core.cache import cache
-
-cache.set('key', 'value', timeout=300)
-value = cache.get('key')
-
-# Декоратор
-from django.views.decorators.cache import cache_page
-
-@cache_page(60 * 15)  # 15 минут
-def my_view(request):
-    pass
-```
-
-### FastAPI
-```python
-from fastapi_cache import FastAPICache
-from fastapi_cache.decorator import cache
-
-@app.get("/users/")
-@cache(expire=60)
-async def get_users():
-    return await fetch_users()
-```
+### 📝 Фраза для интервью
+> "Nginx как reverse proxy принимает запросы, отдаёт статику, проксирует динамику на Gunicorn/Uvicorn. Gunicorn для WSGI приложений, Uvicorn для ASGI. Количество workers обычно 2-4 на CPU core."
 
 ---
 
-## Streaming
+## 🎤 Частые вопросы на интервью
 
-### FastAPI Streaming Response
-```python
-from fastapi.responses import StreamingResponse
+### "Django vs FastAPI?"
+> "Django — batteries included, полный стек (ORM, admin, auth). FastAPI — минималистичный, async, автодокументация OpenAPI. Django для full-stack, FastAPI для API-only микросервисов."
 
-async def generate_data():
-    for i in range(100):
-        yield f"data: {i}\n\n"
-        await asyncio.sleep(0.1)
+### "Что такое N+1 problem?"
+> "Когда ORM делает 1 запрос на коллекцию и N запросов на связанные объекты. Решается through eager loading: select_related в Django (JOIN), prefetch_related (отдельный запрос)."
 
-@app.get("/stream")
-async def stream():
-    return StreamingResponse(generate_data(), media_type="text/event-stream")
-```
+### "Как масштабировать веб-приложение?"
+> "Горизонтально: больше инстансов за load balancer. Кеширование на всех уровнях. Асинхронные задачи через Celery. Read replicas для базы. CDN для статики."
 
-### Django Streaming
-```python
-from django.http import StreamingHttpResponse
+### "Что такое CSRF?"
+> "Cross-Site Request Forgery — когда злоумышленник заставляет браузер пользователя отправить запрос на ваш сайт. Защита: CSRF токен в формах, который проверяется на сервере."
 
-def generate():
-    for i in range(100):
-        yield f"data: {i}\n"
+### "REST vs GraphQL?"
+> "REST: ресурсо-ориентированный, фиксированные endpoints, отдельный запрос на каждый ресурс. GraphQL: запрашиваем только нужные поля, один endpoint, сложнее кешировать."
 
-def stream_view(request):
-    return StreamingHttpResponse(generate(), content_type="text/event-stream")
-```
+### "Что такое WSGI и ASGI?"
+> "WSGI — синхронный интерфейс между веб-сервером и Python приложением. ASGI — асинхронный, поддерживает WebSocket и long-polling. Django использует WSGI (ASGI с 3+), FastAPI — ASGI."
+
+### "Как работает JWT токен?"
+> "JSON Web Token состоит из header, payload и signature. Сервер генерирует токен с секретным ключом, клиент отправляет его в каждом запросе. Сервер проверяет подпись, не храня сессию."
+
+### "Что такое XSS?"
+> "Cross-Site Scripting — внедрение вредоносного JS кода на страницу. Защита: экранирование вывода, Content Security Policy, HttpOnly cookies."
+
+### "Синхронный vs асинхронный Python?"
+> "Синхронный блокирует на I/O операциях. Async/await позволяет обрабатывать другие запросы во время ожидания. FastAPI async нативно, Django — с ограничениями."
+
+### "Что такое Dependency Injection?"
+> "Паттерн, когда зависимости передаются извне, а не создаются внутри. FastAPI Depends() — отличный пример. Упрощает тестирование и модульность."
+
+### "Как реализовать rate limiting?"
+> "Ограничение количества запросов. На уровне Nginx (limit_req), middleware (django-ratelimit), или Redis (счётчики с TTL). Можно по IP, по user, по endpoint."
+
+### "Что такое OpenAPI/Swagger?"
+> "Спецификация для описания REST API. FastAPI генерирует автоматически из типов Pydantic. Даёт интерактивную документацию и генерацию клиентов."
+
+### "Как обрабатывать ошибки в API?"
+> "Централизованный exception handler. Возвращать структурированные ошибки с кодом, сообщением, деталями. HTTP статусы: 4xx для клиентских, 5xx для серверных."
+
+### "Django ORM vs SQLAlchemy?"
+> "Django ORM проще, тесно интегрирован с Django. SQLAlchemy мощнее, гибче, два паттерна (Core и ORM). SQLAlchemy для сложных запросов и non-Django проектов."
+
+### "Что такое CORS и как настроить?"
+> "Cross-Origin Resource Sharing — механизм разрешения запросов с другого домена. Настраивается через заголовки Access-Control-Allow-Origin. Django-cors-headers, FastAPI CORSMiddleware."
+
+### "Как тестировать веб-приложение?"
+> "Unit тесты для логики, интеграционные для API (pytest + TestClient), e2e для полного flow (Selenium, Playwright). Fixtures для данных, моки для внешних сервисов."
+
+### "Что такое Gunicorn workers?"
+> "Рабочие процессы, обрабатывающие запросы параллельно. Sync workers для WSGI, аsync для ASGI. Формула: 2 * CPU + 1. Слишком много — overhead на память."
+
+### "Как логировать в production?"
+> "Структурированные логи (JSON), уровни (DEBUG, INFO, ERROR), корреляционные ID для трейсинга. ELK stack или cloud logging (CloudWatch, Stackdriver)."
+
+### "Что такое сессии и как они работают?"
+> "Хранение состояния пользователя между запросами. Session ID в cookie, данные на сервере (Redis, DB). Stateless альтернатива — JWT в каждом запросе."
+
