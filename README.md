@@ -12,12 +12,12 @@
 
 | # | Тема | Описание |
 |---|------|----------|
-| 01 | [Docker](01_Docker.md) | Контейнеризация, Dockerfile, Docker Compose, оптимизация образов |
-| 02 | [Redis](02_Redis.md) | Кеширование, структуры данных, persistence, pub/sub |
-| 03 | [RabbitMQ](03_RabbitMQ.md) | Message queues, exchanges, routing, patterns |
+| 01 | [Python](01_Python.md) | Core Python, ООП, concurrency, best practices |
+| 02 | [Databases](02_Databases.md) | SQL, PostgreSQL, индексы, транзакции, нормализация |
+| 03 | [Docker](03_Docker.md) | Контейнеризация, Dockerfile, Docker Compose, оптимизация образов |
 | 04 | [Web Frameworks](04_Web_Frameworks.md) | Django, FastAPI, Flask, async/await, middleware |
-| 05 | [Databases](05_Databases.md) | SQL, PostgreSQL, индексы, транзакции, нормализация |
-| 06 | [Python](06_Python.md) | Core Python, ООП, concurrency, best practices |
+| 05 | [Redis](05_Redis.md) | Кеширование, структуры данных, persistence, pub/sub |
+| 06 | [RabbitMQ](06_RabbitMQ.md) | Message queues, exchanges, routing, patterns |
 | 07 | [System Design](07_System_Design.md) | CAP theorem, scaling, caching, load balancing |
 | 08 | [Security](08_Security.md) | Authentication, OWASP, encryption, secure coding |
 | 09 | [API Architecture](09_API_Architecture.md) | REST, GraphQL, gRPC, API versioning |
@@ -42,17 +42,33 @@
 
 ### Рекомендуемый порядок изучения
 
+Файлы уже упорядочены по оптимальному порядку изучения:
+
 ```
-1. Начните с Python (06) — основа для остальных тем
-2. Databases (05) — фундаментальные знания
-3. Docker (01) — современный стандарт деплоя
-4. Web Frameworks (04) — Django/FastAPI
-5. Redis (02) + RabbitMQ (03) — кеширование и очереди
-6. System Design (07) — масштабирование
-7. Security (08) + API (09) — безопасность и API design
-8. Observability (10) + CI/CD (11) — production ops
-9. Algorithms (12) — для coding rounds
-10. Behavioral (13) — soft skills
+📌 ОСНОВЫ
+01_Python       — основа для остальных тем
+02_Databases    — фундаментальные знания
+
+📌 ИНФРАСТРУКТУРА
+03_Docker       — современный стандарт деплоя
+04_Web_Frameworks — Django/FastAPI
+
+📌 ИНТЕГРАЦИИ
+05_Redis        — кеширование
+06_RabbitMQ     — очереди сообщений
+
+📌 АРХИТЕКТУРА
+07_System_Design — масштабирование систем
+08_Security      — безопасность
+09_API_Architecture — API design
+
+📌 PRODUCTION
+10_Observability — мониторинг и логирование
+11_CICD_DevOps   — деплой и автоматизация
+
+📌 ИНТЕРВЬЮ
+12_Algorithms    — для coding rounds
+13_Behavioral    — soft skills
 ```
 
 ---
