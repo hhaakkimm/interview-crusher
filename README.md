@@ -25,6 +25,7 @@
 | 11 | [CI/CD & DevOps](11_CICD_DevOps.md) | Pipelines, deployment strategies, IaC |
 | 12 | [Algorithms](12_Algorithms.md) | Структуры данных, алгоритмы, Big O |
 | 13 | [Behavioral](13_Behavioral.md) | STAR метод, soft skills, вопросы интервьюеру |
+| 14 | [Prompt Engineering](14_Prompt_Engineering.md) | LLM prompting, RAG, agents, prompt security |
 
 ---
 
@@ -69,6 +70,9 @@
 📌 ИНТЕРВЬЮ
 12_Algorithms    — для coding rounds
 13_Behavioral    — soft skills
+
+📌 AI & LLM
+14_Prompt_Engineering — prompting, RAG, agents
 ```
 
 ---
