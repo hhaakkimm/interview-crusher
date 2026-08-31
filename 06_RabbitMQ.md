@@ -292,20 +292,94 @@ rabbitmqctl join_cluster rabbit@node1
 rabbitmqctl start_app
 ```
 
-### Quorum Queues (рекомендуется)
+### Quorum Queues — теперь единственный поддерживаемый тип реплицируемой durable очереди
 ```python
 channel.queue_declare(
     queue='orders',
     arguments={'x-queue-type': 'quorum'}
 )
 ```
-Данные реплицируются на несколько узлов, автоматический failover.
+Данные реплицируются на несколько узлов через **Raft consensus**, автоматический failover.
+
+#### RabbitMQ 4.0 (август 2024) — конец classic mirrored queues
+
+До версии 4.0 в RabbitMQ было два способа реплицировать очередь: старые **classic mirrored queues** (репликация на уровне Erlang-процессов, без формального консенсуса) и более новые **quorum queues** (Raft-based, добавлены в 3.8). Classic mirrored queues были помечены deprecated ещё в 3.x, а в **RabbitMQ 4.0 они полностью удалены** — quorum queues стали единственным рекомендованным и по факту единственным поддерживаемым типом реплицируемой durable очереди.
+
+Почему это важно на интервью:
+- Quorum queues дают формальные гарантии сохранности данных через Raft consensus (запись подтверждена, только если её видит большинство узлов) — mirrored queues такой гарантии не давали и были подвержены edge-case потере данных при split-brain.
+- Если в опыте фигурирует RabbitMQ версии до 4.0 с mirrored queues, стоит явно сказать, что это устаревший подход, а миграционный путь — на quorum queues.
+- Quorum queues пока не поддерживают некоторые фичи classic-очередей (например, priority queues) — в редких случаях это влияет на выбор, но для подавляющего большинства durable-очередей это уже не вопрос выбора, а стандарт.
+
+### Khepri — новый metadata store (замена Mnesia)
+
+Метаданные кластера (какие очереди/exchange'и/bindings существуют, где реплики) исторически хранились в **Mnesia** — встроенной Erlang-БД, которая плохо переживала split-brain и требовала ручного вмешательства при рассинхронизации узлов. **Khepri** — новый metadata store на основе Raft (тот же принцип консенсуса, что и у quorum queues), доступный как опциональная (пока не включённая по умолчанию везде) альтернатива Mnesia, начиная с недавних версий RabbitMQ.
+
+Что важно знать: Khepri даёт более предсказуемое поведение при network partition (тот же формальный Raft-консенсус, что убрал двусмысленность и у очередей) — это логичное продолжение того же архитектурного сдвига, что и переход mirrored queues → quorum queues: RabbitMQ последовательно заменяет Erlang-специфичные, менее формальные механизмы репликации/консенсуса на Raft везде, где раньше был "best effort".
 
 ### Federation — между дата-центрами
 Для географически распределённых систем.
 
 ### 📝 Фраза для интервью
-> "Consumer'ы масштабируются добавлением инстансов. Для HA используем кластер с quorum queues — данные реплицируются, при отказе узла работа продолжается. Federation — для связи между дата-центрами."
+> "Consumer'ы масштабируются добавлением инстансов. Для HA используем кластер с quorum queues — единственный поддерживаемый тип реплицируемой durable очереди начиная с RabbitMQ 4.0, где classic mirrored queues были полностью удалены как менее надёжный, не Raft-based механизм. На уровне метаданных кластера то же самое происходит с Khepri — Raft-based заменой legacy Mnesia, более устойчивой к split-brain. Federation — для связи между дата-центрами."
+
+---
+
+## 9. RabbitMQ Streams — log-based очереди (Kafka-подобная семантика)
+
+### 🎯 Что спрашивают
+> "Чем RabbitMQ Streams отличаются от обычных (classic/quorum) очередей?"
+
+### Простое объяснение
+**RabbitMQ Streams** — отдельный, log-based тип очереди (появился как feature preview в 3.9, к 2026 — зрелая, first-class возможность), концептуально близкий к Kafka: сообщения не удаляются сразу после обработки, а хранятся как append-only лог, который можно **перечитывать** (replay) с любой точки, и который несколько consumer'ов могут читать независимо, каждый со своим offset.
+
+```python
+# rabbitmq-stream-client (отдельный протокол, не классический AMQP 0-9-1)
+from rstream import Producer, Consumer, ConsumerOffsetSpecification, OffsetType
+
+async with Producer("localhost", username="guest", password="guest") as producer:
+    await producer.send(stream="orders-stream", message=b'{"order_id": 123}')
+
+async with Consumer("localhost", username="guest", password="guest") as consumer:
+    await consumer.subscribe(
+        stream="orders-stream",
+        offset_specification=ConsumerOffsetSpecification(OffsetType.FIRST),  # replay с начала
+    )
+```
+
+Когда выбирать Streams вместо classic/quorum очередей:
+
+| Критерий | Classic/Quorum queue | Streams |
+|----------|----------------------|---------|
+| Модель | Сообщение удаляется после ack | Append-only log, сообщение хранится по retention-политике независимо от ack |
+| Replay | Нет (once consumed — ушло) | Да, можно перечитать с любого offset |
+| Множественные независимые consumer'ы одного потока | Нужно fanout-exchange + отдельные очереди на каждого | Нативно — offset у каждого consumer свой |
+| Throughput | Хорош для типичных задач/очередей | Оптимизирован под очень высокий throughput (последовательное чтение с диска, zero-copy) |
+| Типичный use case | Задачи, RPC, разовая обработка событий | Event sourcing, аудит-логи, high-throughput аналитика — тот же паттерн, что и Kafka topics |
+
+### 📝 Фраза для интервью
+> "RabbitMQ Streams — это log-based тип очереди внутри того же RabbitMQ-кластера, семантически близкий к Kafka: append-only, поддерживает replay, несколько consumer'ов читают независимо со своим offset, оптимизирован под высокий throughput. Использую его, когда нужен Kafka-подобный паттерн (event sourcing, replay, аудит), но не хочется поднимать отдельный Kafka-кластер, если RabbitMQ уже есть в инфраструктуре. Для классических задач/RPC/разовой обработки событий обычные quorum queues всё ещё более уместны и проще в эксплуатации."
+
+---
+
+## 10. RabbitMQ vs Kafka vs NATS vs Cloud-native очереди — как выбирать
+
+### 🎯 Что спрашивают
+> "Почему RabbitMQ, а не Kafka/NATS/managed cloud messaging?"
+
+### Простое объяснение
+К 2026 выбор брокера сообщений — это не "RabbitMQ vs Kafka" по умолчанию, как было раньше. Добавились как минимум два важных игрока: **NATS/NATS JetStream** как лёгкая альтернатива, и managed cloud-сервисы (SQS/SNS, EventBridge, Google Pub/Sub) как вариант вообще не эксплуатировать брокер самостоятельно.
+
+| Решение | Сильные стороны | Когда выбрать |
+|---------|------------------|----------------|
+| **RabbitMQ** | Богатый роутинг (exchanges: direct/topic/fanout), зрелая экосистема, quorum queues для надёжности, Streams для log-семантики | Классическая межсервисная асинхронность со сложной маршрутизацией, self-hosted или в managed-варианте (CloudAMQP и др.) |
+| **Kafka** | Durable log с долгим retention, огромная пропускная способность, зрелая экосистема (Connect, Schema Registry, Streams API) | Event streaming/event sourcing на масштабе компании, множество независимых consumer'ов одних и тех же событий, долгий replay |
+| **NATS / NATS JetStream** | Очень лёгкий, простой в эксплуатации, низкая latency; JetStream добавляет persistence/replay поверх базового pub/sub | Микросервисы, где важна простота операций и низкий overhead, а не богатая маршрутизация RabbitMQ или экосистема Kafka; набирает популярность в cloud-native/Kubernetes-инфраструктуре как "лёгкий брокер по умолчанию" |
+| **Managed cloud (SQS/SNS, EventBridge, Google Pub/Sub)** | Zero-ops — не нужно администрировать кластер, встроенное масштабирование, оплата по использованию | Команда уже в конкретном облаке и не хочет держать отдельную messaging-инфраструктуру; типичный default для cloud-native стартапов |
+
+Честный вывод для интервью: самостоятельно хостить RabbitMQ или Kafka имеет смысл, когда нужен контроль над семантикой маршрутизации/retention, которого managed cloud-сервисы не дают, или когда стоимость масштаба перевешивает cloud-native pricing. Многие команды в 2026 стартуют с managed cloud messaging просто потому, что это резко снижает operational overhead, и переходят на self-hosted RabbitMQ/Kafka только когда упираются в конкретные ограничения (маршрутизация, throughput, стоимость на масштабе, требования к data residency).
+
+### 📝 Фраза для интервью
+> "RabbitMQ выбираю, когда нужна гибкая маршрутизация (topic/direct/fanout exchanges) и зрелая экосистема для классической межсервисной асинхронности. Kafka — когда нужен durable event log с долгим retention и много независимых consumer'ов одних и тех же событий. NATS/JetStream — когда важны простота эксплуатации и низкий overhead, особенно в cloud-native/Kubernetes-окружении, а богатая маршрутизация RabbitMQ не нужна. А managed cloud messaging (SQS/EventBridge/Pub-Sub) — когда команда уже в облаке и не хочет тратить operational bandwidth на администрирование брокера вообще — это всё чаще дефолтный первый выбор, а self-hosted брокер обосновывается конкретными ограничениями, а не берётся 'по умолчанию'."
 
 ---
 
@@ -339,7 +413,7 @@ channel.queue_declare(
 > "Отправляем запрос с correlation_id и reply_to (очередь для ответа). Сервер обрабатывает и отправляет ответ в reply_to с тем же correlation_id."
 
 ### "Что такое Quorum Queues?"
-> "Очереди с репликацией на несколько узлов через Raft consensus. Заменяют mirrored queues. Надёжнее и производительнее для HA."
+> "Очереди с репликацией на несколько узлов через Raft consensus. С RabbitMQ 4.0 (2024) полностью заменили classic mirrored queues, которые были удалены из ядра как менее надёжный механизм без формального консенсуса. Надёжнее и производительнее для HA — сейчас это стандарт, а не одна из опций."
 
 ### "Как мониторить RabbitMQ?"
 > "Management plugin (веб-интерфейс), Prometheus + rabbitmq_exporter, rabbitmqctl команды. Отслеживать: queue depth, consumer count, message rates."
@@ -364,4 +438,40 @@ channel.queue_declare(
 
 ### "Как реализовать delayed messages?"
 > "Через DLX с TTL: сообщение в очередь с TTL, после истечения попадает в основную очередь через DLX. Или плагин rabbitmq_delayed_message_exchange."
+
+### "Что изменилось в RabbitMQ 4.0?"
+> "Главное — classic mirrored queues полностью удалены; quorum queues (Raft-based) стали единственным поддерживаемым типом реплицируемой durable очереди. Это убирает менее надёжный, не консенсус-based механизм репликации в пользу формальных Raft-гарантий сохранности данных."
+
+### "Что такое Khepri в RabbitMQ?"
+> "Новый metadata store кластера на основе Raft — опциональная замена legacy Mnesia. Даёт более предсказуемое поведение при network partition/split-brain, продолжая тот же архитектурный сдвиг к Raft-консенсусу, что и quorum queues."
+
+### "Чем RabbitMQ Streams отличаются от обычных очередей?"
+> "Streams — log-based тип очереди: сообщения хранятся append-only и могут быть перечитаны (replay), несколько consumer'ов читают независимо со своим offset — семантика ближе к Kafka, чем к классической AMQP-очереди. Использую, когда нужен replay/event sourcing/высокий throughput внутри уже существующего RabbitMQ-кластера."
+
+### "Когда выбрать NATS вместо RabbitMQ?"
+> "Когда важны простота эксплуатации и низкий overhead больше, чем богатая маршрутизация RabbitMQ или экосистема Kafka — особенно в cloud-native/Kubernetes-инфраструктуре. NATS JetStream добавляет persistence/replay поверх лёгкого pub/sub, но экосистема и тулинг у него меньше, чем у RabbitMQ/Kafka."
+
+### "Когда лучше взять managed cloud messaging вместо своего RabbitMQ?"
+> "Когда команда уже в конкретном облаке и не хочет тратить operational bandwidth на администрирование брокера — SQS/EventBridge/Pub-Sub дают zero-ops масштабирование и оплату по использованию. Self-hosted RabbitMQ/Kafka обосновываю конкретными ограничениями managed-сервисов (гибкость маршрутизации, стоимость на масштабе, data residency), а не беру по умолчанию."
+
+---
+
+## 📚 Чек-лист для подготовки
+
+### Базовый уровень
+- [ ] Producer/Exchange/Binding/Queue/Consumer, AMQP-протокол
+- [ ] Типы Exchange: fanout, direct, topic
+- [ ] Acknowledgements: ack/nack/reject
+
+### Средний уровень
+- [ ] Prefetch и распределение нагрузки
+- [ ] Dead Letter Exchange, retry с задержкой
+- [ ] Durability: durable queue, persistent messages, publisher confirms
+
+### Продвинутый уровень
+- [ ] RabbitMQ 4.0: удаление classic mirrored queues, quorum queues как стандарт
+- [ ] Khepri как Raft-based замена Mnesia
+- [ ] RabbitMQ Streams: log-based семантика, replay, отличие от classic/quorum
+- [ ] RabbitMQ vs Kafka vs NATS/JetStream vs managed cloud messaging — decision framework
+- [ ] Масштабирование и HA, clustering
 
